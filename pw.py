@@ -1,10 +1,22 @@
 import asyncio
+import threading
 
-from .func import WorkFuncs
+
+class WorkThread(threading.Thread):
+    def __init__(self, fun, args):
+        threading.Thread.__init__(self)
+        self.setDaemon(True)
+        self.result = None
+        self.error = None
+        self.fun = fun
+        self.args = args
+
+    def run(self):
+        self.result = self.fun(*self.args)
 
 
 class ParallelTask:
-    def New(self, name: str, parallelCount: int, batchSize: int, **params) -> bool:
+    def new(self, name: str, parallelCount: int, batchSize: int, worker, **params) -> bool:
         '''
         根据 parallelCount 和 batchSize 创建协程
         name：任务名称
@@ -12,10 +24,10 @@ class ParallelTask:
         batchSize： 单次任务获取数据量
         创建成功返回 True
         '''
-        if not hasattr(WorkFuncs, name):
+        if not hasattr(worker, name):
             # 检查任务名是否合法
             return False
-        func = getattr(WorkFuncs, name)
+        func = getattr(worker, name)
 
         # futures = (asyncio.Future() for _ in range(parallelCount))
 
@@ -25,21 +37,40 @@ class ParallelTask:
                 i * batchSize, batchSize, **params
                 ) for i in range(parallelCount)
         )
-        self.tasks = [asyncio.ensure_future(c) for c in coroutines]
+        self.tasks = [asyncio.ensure_future(c, loop=self.loop) for c in coroutines]
         return True
 
-    def Run(self, name: str, parallelCount: int, batchSize: int, **params):
-        try:
-            self.New(name, parallelCount, batchSize, **params)
-            # 创建事件循环
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(asyncio.wait(self.tasks))
-        finally:
-            loop.close()
+    def run(self, name: str, parallelCount: int, batchSize: int, worker, **params):
+        # 创建事件循环
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        self.loop = asyncio.get_event_loop()
 
-    def GetResult(self, name: str, parallelCount: int, batchSize: int, duration: int=0) -> list:
-        self.Run(name, parallelCount, batchSize)
+        self.new(name, parallelCount, batchSize, worker, **params)
+
+        self.loop.run_until_complete(asyncio.wait(self.tasks))
+        self.loop.stop()
+        self.loop.close()
+
+    def _getResult(self, name: str, parallelCount: int, batchSize: int, worker) -> list:
+        self.run(name, parallelCount, batchSize, worker)
         data = []
         for t in self.tasks:
-            data.extend(t.result())
+            if not t.result()[1]:
+                data.extend(t.result()[0])
         return data
+
+    def getResult(self, name: str, parallelCount: int, batchSize: int, worker, duration: int=0) -> tuple:
+        error = None
+
+        if duration:
+            t = WorkThread(self._getResult, (name, parallelCount, batchSize, worker))
+            t.start()
+            t.join(duration)
+            if t.isAlive():
+                error = "Timeout"
+                return None, error
+            res = t.result
+            return res, error
+        res = self._getResult(name, parallelCount, batchSize, worker)
+        return res, error
