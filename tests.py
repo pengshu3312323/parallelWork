@@ -14,13 +14,13 @@ def test_1():
     p = ParallelTask()
     # 并发量5，单次获取数量200，限定时间一秒内
     time_begin = time.time()
-    res = p.getResult(funcName, 5, 200, TestWorker, 1)
+    res = p.getResult(funcName, 2, 100, TestWorker, 1)
     print("耗时：{}s".format(time.time() - time_begin))
     if res[1]:
         print(res[1])
     else:
         print("返回数据总量：{}\n".format(len(res[0])))
-    assert res[1] == "Timeout" and res[0] is None
+    assert res[1] == "TimeOut Error" and res[0] is None
 
 
 def test_2():
